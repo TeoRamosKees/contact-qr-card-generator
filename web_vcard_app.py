@@ -1,10 +1,9 @@
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import Flask, render_template_string, request, jsonify
 import qrcode
 from PIL import Image
 import io
 import base64
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -23,11 +22,445 @@ ADR:;;{address};;;;
 END:VCARD"""
     return vcard
 
+# Inline HTML template (since Vercel serverless functions need everything in one file)
+HTML_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📱 vCard QR Generator</title>
+    <meta name="description" content="Generate QR codes for instant contact sharing">
+    <link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+        
+        .form-container {
+            padding: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 1rem;
+        }
+        
+        .required {
+            color: #e74c3c;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+            -webkit-appearance: none;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+        }
+        
+        .btn-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        .btn {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            min-width: 200px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(76, 175, 80, 0.3);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .qr-result {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin-top: 30px;
+            text-align: center;
+            display: none;
+        }
+        
+        .qr-result.show {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .qr-image {
+            max-width: 300px;
+            width: 100%;
+            border: 3px solid #4CAF50;
+            border-radius: 15px;
+            margin: 20px 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-weight: 500;
+        }
+        
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+        }
+        
+        .alert-success {
+            background: #e8f5e8;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .clear-btn {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a5a);
+            margin-left: 10px;
+            min-width: 120px;
+        }
+        
+        .clear-btn:hover {
+            box-shadow: 0 10px 25px rgba(255, 107, 107, 0.3);
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .form-container {
+                padding: 20px;
+            }
+            
+            .header {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .btn {
+                width: 100%;
+                margin: 5px 0;
+                min-width: auto;
+            }
+            
+            .clear-btn {
+                margin-left: 0;
+            }
+        }
+        
+        .ios-install {
+            background: #007AFF;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-weight: 500;
+        }
+        
+        .feature-list {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        
+        .feature-list h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .feature-list ul {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .feature-list li {
+            padding: 8px 0;
+            color: #666;
+        }
+        
+        .feature-list li:before {
+            content: "✅ ";
+            color: #4CAF50;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📱 vCard QR Generator</h1>
+            <p>Create contact QR codes instantly • Works on all devices</p>
+        </div>
+        
+        <div class="ios-install" id="iosInstall" style="display: none;">
+            📱 Add to Home Screen: Tap Share → Add to Home Screen for app-like experience
+        </div>
+        
+        <div class="form-container">
+            <div class="feature-list">
+                <h3>🚀 Features:</h3>
+                <ul>
+                    <li>Works perfectly on iPhone, iPad, Android</li>
+                    <li>No app download required</li>
+                    <li>Instant QR code generation</li>
+                    <li>Save directly to Photos</li>
+                </ul>
+            </div>
+            
+            <form id="vcardForm">
+                <div class="form-group">
+                    <label for="firstName">First Name <span class="required">*</span></label>
+                    <input type="text" id="firstName" name="first_name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="lastName">Last Name <span class="required">*</span></label>
+                    <input type="text" id="lastName" name="last_name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="phone">Phone Number <span class="required">*</span></label>
+                    <input type="tel" id="phone" name="phone" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="email">Email Address <span class="required">*</span></label>
+                    <input type="email" id="email" name="email" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="organization">Organization</label>
+                    <input type="text" id="organization" name="organization">
+                </div>
+                
+                <div class="form-group">
+                    <label for="title">Job Title</label>
+                    <input type="text" id="title" name="title">
+                </div>
+                
+                <div class="form-group">
+                    <label for="website">Website/LinkedIn</label>
+                    <input type="url" id="website" name="website">
+                </div>
+                
+                <div class="form-group">
+                    <label for="address">Address</label>
+                    <input type="text" id="address" name="address">
+                </div>
+                
+                <div class="btn-container">
+                    <button type="submit" class="btn" id="generateBtn">
+                        🔄 Generate QR Code
+                    </button>
+                    <button type="button" class="btn clear-btn" id="clearBtn">
+                        🗑️ Clear
+                    </button>
+                </div>
+            </form>
+            
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Generating your QR code...</p>
+            </div>
+            
+            <div id="alertContainer"></div>
+            
+            <div class="qr-result" id="qrResult">
+                <h3>📱 Your Contact QR Code</h3>
+                <img id="qrImage" class="qr-image" alt="vCard QR Code">
+                <div>
+                    <p><strong>📲 How to use:</strong></p>
+                    <p>• Long-press the QR code → Save to Photos</p>
+                    <p>• Share via text, email, or social media</p>
+                    <p>• Others scan to instantly save your contact!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Detect iOS
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        if (isIOS) {
+            document.getElementById('iosInstall').style.display = 'block';
+        }
+        
+        const form = document.getElementById('vcardForm');
+        const generateBtn = document.getElementById('generateBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const loading = document.getElementById('loading');
+        const qrResult = document.getElementById('qrResult');
+        const qrImage = document.getElementById('qrImage');
+        const alertContainer = document.getElementById('alertContainer');
+        
+        function showAlert(message, type = 'error') {
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            alertContainer.innerHTML = '';
+            alertContainer.appendChild(alert);
+            setTimeout(() => alert.remove(), 5000);
+        }
+        
+        function showLoading(show) {
+            loading.style.display = show ? 'block' : 'none';
+            generateBtn.disabled = show;
+        }
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            showLoading(true);
+            qrResult.classList.remove('show');
+            alertContainer.innerHTML = '';
+            
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+            
+            try {
+                const response = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    qrImage.src = `data:image/png;base64,${result.qr_image}`;
+                    qrImage.onload = () => {
+                        qrResult.classList.add('show');
+                        showAlert('QR Code generated successfully! 🎉', 'success');
+                    };
+                } else {
+                    showAlert(result.error);
+                }
+            } catch (error) {
+                showAlert('Network error. Please check your connection.');
+            } finally {
+                showLoading(false);
+            }
+        });
+        
+        clearBtn.addEventListener('click', () => {
+            form.reset();
+            qrResult.classList.remove('show');
+            alertContainer.innerHTML = '';
+            document.getElementById('firstName').focus();
+        });
+        
+        // Focus first input on load
+        document.getElementById('firstName').focus();
+    </script>
+</body>
+</html>
+'''
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template_string(HTML_TEMPLATE)
 
-@app.route('/generate', methods=['POST'])
+@app.route('/api/generate', methods=['POST'])
 def generate_qr():
     try:
         # Get form data
@@ -72,14 +505,10 @@ def generate_qr():
         qr_img.save(img_buffer, format='PNG')
         img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
         
-        # Generate filename
-        filename = f"{data.get('first_name', 'contact').strip()}_{data.get('last_name', 'card').strip()}_qr.png".replace(' ', '_')
-        
         return jsonify({
             'success': True,
             'qr_image': img_base64,
-            'filename': filename,
-            'vcard_content': vcard
+            'message': 'QR Code generated successfully!'
         })
         
     except Exception as e:
@@ -88,24 +517,10 @@ def generate_qr():
             'error': f"Error generating QR code: {str(e)}"
         })
 
-@app.route('/download/<filename>')
-def download_qr(filename):
-    """Handle QR code download"""
-    try:
-        # This would need to be implemented with session storage
-        # For now, return a basic response
-        return jsonify({'message': 'Download functionality would be implemented here'})
-    except Exception as e:
-        return jsonify({'error': str(e)})
+# Vercel serverless function handler
+def handler(request):
+    return app.wsgi_app(request.environ, request.start_response)
 
+# For local development
 if __name__ == '__main__':
-    # Create templates directory if it doesn't exist
-    os.makedirs('templates', exist_ok=True)
-    print("🌐 vCard QR Generator Web App")
-    print("📱 Perfect for iOS, Android, and all devices!")
-    print("🚀 Starting server...")
-    print("📡 Access from any device on your network at:")
-    print("   • Local: http://localhost:5000")
-    print("   • Network: http://[your-ip]:5000")
-    print("💡 To find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True)
